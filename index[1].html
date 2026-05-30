@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一般勞工薪資模擬器 2026</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg:     '#161b2e',
+        panel:  '#1e2540',
+        card:   '#252d47',
+        card2:  '#2d3655',
+        bdr:    '#3a4468',
+        gold:   '#f0b429',
+        gold2:  '#ffd166',
+        blue2:  '#6aabf7',
+        teal:   '#5de0a8',
+      }
+    }
+  }
+}
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Noto Sans TC', sans-serif; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* 捲軸細版 */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3a4468; border-radius: 2px; }
+
+  /* 日曆格子顏色 */
+  .s-work     { background:#243650; border-color:rgba(106,171,247,.3);  color:#6aabf7; }
+  .s-rest     { background:#1e3530; border-color:rgba(76,175,130,.25);  color:#4caf82; }
+  .s-rest-work{ background:#1a4535; border-color:rgba(93,224,168,.5);   color:#5de0a8; }
+  .s-exc      { background:#3d2020; border-color:rgba(224,92,92,.35);   color:#e05c5c; }
+  .s-exc-work { background:#5a1515; border-color:rgba(224,92,92,.65);   color:#ff8080; }
+  .s-nat      { background:#3a2e10; border-color:rgba(240,180,41,.35);  color:#f0b429; }
+  .s-nat-work { background:#5a4005; border-color:rgba(255,209,102,.65); color:#ffd166; }
+
+  /* 表單元素 */
+  input[type="number"], select {
+    background:#2d3655; border:1px solid #3a4468; border-radius:7px;
+    color:#e8eaf0; padding:9px 12px; font-family:'JetBrains Mono',monospace;
+    font-size:15px; outline:none; width:100%; appearance:none; -webkit-appearance:none;
+    transition: border-color .2s;
+  }
+  input[type="number"]:focus, select:focus { border-color:#4a90d9; }
+  select option { background:#2d3655; }
+  input[type="range"] {
+    -webkit-appearance:none; appearance:none;
+    width:100%; height:6px; background:#2d3655; border-radius:3px;
+    border:1px solid #3a4468; outline:none; cursor:pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance:none;
+    width:22px; height:22px; border-radius:50%; cursor:pointer;
+    background:linear-gradient(135deg,#f0b429,#e08020);
+    box-shadow:0 2px 6px rgba(240,180,41,.4);
+  }
+
+  /* toggle */
+  .tsw { position:relative; width:44px; height:24px; flex-shrink:0; }
+  .tsw input { opacity:0; width:0; height:0; }
+  .ttrack { position:absolute; inset:0; background:#2d3655; border:1px solid #3a4468; border-radius:12px; cursor:pointer; transition:.25s; }
+  .ttrack::before { content:''; position:absolute; left:3px; top:3px; width:16px; height:16px; background:#6b7599; border-radius:50%; transition:.25s; }
+  .tsw input:checked + .ttrack { background:rgba(74,144,217,.2); border-color:#4a90d9; }
+  .tsw input:checked + .ttrack::before { background:#4a90d9; left:23px; }
+
+  /* 日曆格子：桌面版固定高度 */
+  .cal-day {
+    height:40px; border-radius:6px; border:1px solid transparent;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:1px;
+    cursor:pointer; user-select:none; transition:transform .1s, opacity .1s; overflow:hidden;
+  }
+  .cal-day:hover { transform:scale(1.08); z-index:2; }
+  .cal-day:active { transform:scale(.92); opacity:.8; }
+  .cal-day.empty { cursor:default; background:transparent!important; border-color:transparent!important; }
+  .cal-day.empty:hover { transform:none; }
+  .cal-day.is-today { box-shadow:0 0 0 2px #f0b429; }
+  .cal-day .dn { font-size:13px; font-weight:700; line-height:1; }
+  .cal-day .dt { font-size:8px; line-height:1; font-weight:600; opacity:.75; font-family:'JetBrains Mono',monospace; }
+
+  /* 手機版月曆格子：正方形比例，字體稍小，絕不重疊 */
+  @media (max-width:1023px) {
+    .cal-day {
+      height:auto;       /* 取消固定高度，讓 aspect-square 接管 */
+      aspect-ratio:1/1;
+      padding:1px;
+    }
+    .cal-day .dn { font-size:11px; }
+    .cal-day .dt { font-size:7px; }
+  }
+
+  /* 手機 tab 頁切換 */
+  .mobile-page { display:none; }
+  .mobile-page.active { display:flex; flex-direction:column; gap:10px; }
+
+  /* 補假提醒 */
+  .comp-note { display:none; }
+  .comp-note.show { display:block; }
+</style>
+</head>
+<body class="bg-bg text-[#e8eaf0] min-h-screen">
+
+<!-- ══ 頭部 ══ -->
+<header class="bg-panel border-b border-bdr sticky top-0 z-50 flex items-center gap-3 px-4 h-14">
+  <div class="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 shadow-lg" style="background:linear-gradient(135deg,#f0b429,#e08020)">👷</div>
+  <div class="flex-1 min-w-0">
+    <h1 class="text-sm lg:text-lg font-bold truncate">一般勞工薪資模擬器</h1>
+    <p class="hidden lg:block text-xs text-[#6b7599]">勞動基準法 §24 §36 §39 §40・2026年（民國115年）</p>
+  </div>
+  <!-- 手機版：顯示即時到手薪資在右側 -->
+  <div class="lg:hidden flex flex-col items-end flex-shrink-0">
+    <span class="text-[9px] text-[#6b7599]">到手</span>
+    <span class="mono text-sm font-bold text-[#4caf82]" id="hdr_net_m">—</span>
+  </div>
+  <!-- 桌面版即時到手薪資 -->
+  <div class="hidden lg:flex flex-col items-end flex-shrink-0">
+    <span class="text-xs text-[#6b7599]">實際到手薪資</span>
+    <span class="mono text-xl font-bold text-[#4caf82]" id="hdr_net">—</span>
+  </div>
+</header>
+
+<!-- ══ 桌面版：grid lg:grid-cols-2 ══ -->
+<div class="hidden lg:grid lg:grid-cols-2 gap-0 max-w-[1400px] mx-auto" style="height:calc(100vh - 56px);">
+
+  <!-- 左欄：設定 + 月曆 -->
+  <div class="bg-panel border-r border-bdr overflow-y-auto p-4 flex flex-col gap-4">
+
+    <!-- 月份 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📅 月份設定</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-sm text-[#a8b0cc] mb-1 block">民國年</label><input type="number" id="d_year" value="115" min="113" max="120"></div>
+        <div><label class="text-sm text-[#a8b0cc] mb-1 block">月份</label>
+          <div class="relative"><select id="d_month">
+            <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option>
+            <option value="4">4月</option><option value="5">5月</option><option value="6">6月</option>
+            <option value="7">7月</option><option value="8">8月</option><option value="9">9月</option>
+            <option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+          </select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 排班月曆 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="flex justify-between items-center mb-1">
+        <h3 class="text-base font-bold" id="d_calTitle">排班月曆</h3>
+        <span class="text-sm">例假 <span class="mono font-bold text-[#e05c5c]" id="d_excCount">0</span>/4天</span>
+      </div>
+      <p class="text-[10px] text-[#6b7599] mb-3 leading-relaxed">點擊切換：<span class="text-gold">班→休→休出→例→例出→班</span>｜國定：<span class="text-gold">國↔國出</span>・例假休息日不限定週六日</p>
+      <div class="grid grid-cols-7 gap-1 mb-1">
+        <div class="text-center text-xs font-bold py-1 text-[#e05c5c]">日</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6b7599]">一</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6b7599]">二</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6b7599]">三</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6b7599]">四</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6b7599]">五</div>
+        <div class="text-center text-xs font-bold py-1 text-[#6aabf7]">六</div>
+      </div>
+      <div class="grid grid-cols-7 gap-1" id="d_calGrid"></div>
+      <!-- 統計 -->
+      <div class="grid grid-cols-4 gap-2 mt-3">
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-blue2" id="d_st_work">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">工作日</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-[#4caf82]" id="d_st_rest">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">休息日</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-[#e05c5c]" id="d_st_exc">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">例假日</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-gold" id="d_st_nat">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">國定假日</div></div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mt-2">
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-blue2" id="d_normH">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">正常工時h</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-[#f07833]" id="d_otH">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">加班工時h</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-[#9b72cf]" id="d_comp">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">應補假天</div></div>
+      </div>
+      <div class="mt-3">
+        <div class="h-1.5 bg-card2 border border-bdr rounded-full overflow-hidden"><div class="h-full rounded-full transition-all duration-500" style="background:linear-gradient(90deg,#4a90d9,#f0b429);width:0%" id="d_progFill"></div></div>
+        <div class="flex justify-between text-[10px] text-[#6b7599] mt-1"><span>正常工時（上限174h）</span><span class="mono text-gold" id="d_progLbl">—</span></div>
+      </div>
+    </div>
+
+    <!-- 薪資設定 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">💰 薪資設定</div>
+      <label class="text-sm text-[#a8b0cc] mb-1 block">月薪底薪（元）<span class="text-[10px] text-[#6b7599] ml-1">最低 29,500</span></label>
+      <input type="number" id="d_salary" value="40000" min="29500" step="500">
+    </div>
+
+    <!-- 工時設定 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">⏱ 工時設定</div>
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-sm text-[#a8b0cc]">工作日每日工時</span>
+        <span class="mono text-2xl font-bold text-gold" id="d_lblH">8</span>
+      </div>
+      <input type="range" id="d_slH" min="8" max="12" value="8" step="1">
+      <p class="text-xs text-[#6b7599] mt-1" id="d_hintH">正常8h・延長0h／工作日</p>
+      <div class="mt-3 space-y-3">
+        <div><label class="text-sm text-[#a8b0cc] mb-1 block">休出 每日出勤時數（h）</label><input type="number" id="d_restH" value="8" min="1" max="12"><p class="text-[10px] text-[#6b7599] mt-1">未滿4h以4h計・逾4h未滿8h以8h計・不補假（§24②）</p></div>
+        <div><label class="text-sm text-[#e05c5c] mb-1 block">例出 每日出勤時數（h）</label><input type="number" id="d_excH" value="8" min="1" max="12"><p class="text-[10px] text-[#e05c5c] mt-1">未滿8h以8h計・+1倍工資・須補假（§40）</p></div>
+        <div><label class="text-sm text-gold mb-1 block">國出 每日出勤時數（h）</label><input type="number" id="d_natH" value="8" min="1" max="12"><p class="text-[10px] text-gold mt-1">未滿8h以8h計・+1倍工資・須補假（§39）</p></div>
+      </div>
+    </div>
+
+    <!-- 保險設定 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">🛡 保險設定</div>
+      <div class="space-y-1">
+        <div class="flex justify-between items-center py-2 border-b border-bdr/40"><span class="text-sm text-[#a8b0cc]">勞工保險（12.5%）</span><label class="tsw"><input type="checkbox" id="d_labor" checked><span class="ttrack"></span></label></div>
+        <div class="flex justify-between items-center py-2 border-b border-bdr/40"><span class="text-sm text-[#a8b0cc]">全民健康保險（5.17%）</span><label class="tsw"><input type="checkbox" id="d_health" checked><span class="ttrack"></span></label></div>
+        <div class="flex justify-between items-center py-2"><span class="text-sm text-[#a8b0cc]">勞工退休金（雇主6%）</span><label class="tsw"><input type="checkbox" id="d_retire" checked><span class="ttrack"></span></label></div>
+      </div>
+      <div class="mt-3 space-y-3">
+        <div><label class="text-sm text-[#a8b0cc] mb-1 block">健保眷屬口數</label>
+          <div class="relative"><select id="d_depsH"><option value="0">0口（本人）</option><option value="1">1口</option><option value="2">2口</option><option value="3">3口以上</option></select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div>
+        </div>
+        <div><label class="text-sm text-[#a8b0cc] mb-1 block">扶養親屬（扣繳門檻）</label>
+          <div class="relative"><select id="d_deps"><option value="0">0人</option><option value="1">1人</option><option value="2">2人</option><option value="3">3人</option><option value="4">4人</option><option value="5">5人以上</option></select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 圖例 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📖 圖例</div>
+      <div class="grid grid-cols-2 gap-2 text-sm">
+        <div class="flex items-center gap-2"><div class="s-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">班</div><span class="text-blue2">工作日</span></div>
+        <div class="flex items-center gap-2"><div class="s-rest w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">休</div><span class="text-[#4caf82]">休息日</span></div>
+        <div class="flex items-center gap-2"><div class="s-rest-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">休出</div><span class="text-teal">休息日出勤</span></div>
+        <div class="flex items-center gap-2"><div class="s-exc w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">例</div><span class="text-[#e05c5c]">例假日</span></div>
+        <div class="flex items-center gap-2"><div class="s-exc-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">例出</div><span style="color:#ff8080">例假日出勤</span></div>
+        <div class="flex items-center gap-2"><div class="s-nat w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">國</div><span class="text-gold">國定假日</span></div>
+        <div class="flex items-center gap-2"><div class="s-nat-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">國出</div><span class="text-gold2">國定假日出勤</span></div>
+      </div>
+    </div>
+  </div><!-- end 左欄 -->
+
+  <!-- 右欄：薪資結果 -->
+  <div class="overflow-y-auto p-4 flex flex-col gap-4">
+    <!-- 薪資明細 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">💰 薪資明細試算</div>
+      <div class="bg-card2 border border-bdr rounded-lg px-3 py-2 mono text-xs text-[#6b7599] mb-4" id="d_formula">—</div>
+      <div id="d_sal_rows" class="divide-y divide-bdr">
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">正常工時底薪</div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_base">—</div></div><div class="mono text-base font-semibold text-gold ml-3 whitespace-nowrap" id="d_val_base">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">平日延長工時加班費 <span class="text-xs text-[#6b7599]">§24①</span></div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_ot">—</div></div><div class="mono text-base font-semibold text-gold ml-3 whitespace-nowrap" id="d_val_ot">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">休息日出勤加班費 <span class="text-xs text-[#6b7599]">§24②</span></div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_rest">—</div></div><div class="mono text-base font-semibold text-gold ml-3 whitespace-nowrap" id="d_val_rest">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">例假日出勤加給 <span class="text-xs text-[#e05c5c]">§40・補假</span></div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_exc">—</div></div><div class="mono text-base font-semibold text-[#f07833] ml-3 whitespace-nowrap" id="d_val_exc">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">國定假日出勤加給 <span class="text-xs text-gold">§39・補假</span></div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_nat">—</div></div><div class="mono text-base font-semibold text-gold ml-3 whitespace-nowrap" id="d_val_nat">—</div></div>
+        <div class="flex justify-between items-start pt-3 mt-1"><div><div class="text-base font-semibold">應領薪資總計</div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_gross">—</div></div><div class="mono text-lg font-bold text-[#e8eaf0] ml-3 whitespace-nowrap" id="d_val_gross">—</div></div>
+      </div>
+      <div class="comp-note mt-3 bg-red-900/10 border border-red-500/25 rounded-lg p-3 text-sm text-[#a8b0cc]" id="d_comp_note"><strong class="text-[#e05c5c]">⚠ 補假提醒：</strong><span id="d_comp_text"></span></div>
+    </div>
+    <!-- 扣款 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📉 扣款明細</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-base font-semibold text-[#e05c5c]" id="d_d_labor">—</div><div class="text-xs text-[#6b7599] mt-1">勞保費（員工20%）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="d_d_lg">—</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-base font-semibold text-[#e05c5c]" id="d_d_health">—</div><div class="text-xs text-[#6b7599] mt-1">健保費（員工30%）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="d_d_hg">—</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-base font-semibold text-[#e05c5c]" id="d_d_tax">—</div><div class="text-xs text-[#6b7599] mt-1">薪資扣繳稅（5%）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="d_d_ts">—</div></div>
+        <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-base font-semibold text-[#f07833]" id="d_d_total">—</div><div class="text-xs text-[#6b7599] mt-1">合計扣款</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="d_d_rate">—</div></div>
+      </div>
+      <div class="flex justify-between items-center mt-4 px-4 py-3 rounded-lg border border-gold/25" style="background:linear-gradient(135deg,rgba(74,144,217,.1),rgba(240,180,41,.08))">
+        <span class="text-base font-semibold">🎉 實際到手薪資</span>
+        <span class="mono text-2xl font-bold text-[#4caf82]" id="d_net">—</span>
+      </div>
+    </div>
+    <!-- 雇主成本 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">🏢 雇主另計成本</div>
+      <div class="divide-y divide-bdr">
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">勞保費（雇主70%）</div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_el">—</div></div><div class="mono text-base font-semibold text-blue2 ml-3 whitespace-nowrap" id="d_val_el">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">健保費（雇主60%・含眷口0.56）</div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_eh">—</div></div><div class="mono text-base font-semibold text-blue2 ml-3 whitespace-nowrap" id="d_val_eh">—</div></div>
+        <div class="flex justify-between items-start py-3"><div><div class="text-base font-semibold">勞工退休金（提繳6%）</div><div class="mono text-xs text-[#6b7599] mt-1" id="d_sub_er">—</div></div><div class="mono text-base font-semibold text-blue2 ml-3 whitespace-nowrap" id="d_val_er">—</div></div>
+      </div>
+      <div class="flex justify-between items-center mt-4 px-4 py-3 rounded-lg border border-blue2/30" style="background:linear-gradient(135deg,rgba(74,144,217,.12),rgba(74,144,217,.06))">
+        <span class="text-base font-semibold">雇主每月總用人成本</span>
+        <span class="mono text-2xl font-bold text-blue2" id="d_cost">—</span>
+      </div>
+    </div>
+    <!-- 法律 -->
+    <div class="bg-card border border-bdr rounded-xl p-4">
+      <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">⚖️ 法律依據</div>
+      <div class="divide-y divide-bdr/50 text-sm">
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">最低工資法§5</span><span class="text-[#a8b0cc] leading-relaxed">2026年月薪最低工資 <strong class="text-gold">29,500元</strong>・時薪 <strong class="text-gold">196元</strong></span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞基法§24①</span><span class="text-[#a8b0cc] leading-relaxed">平日延長工時：前2h <strong class="text-gold">×4/3</strong>、再延長 <strong class="text-gold">×5/3</strong>；每日≤4h，每月≤46h</span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞基法§24②</span><span class="text-[#a8b0cc] leading-relaxed">休息日出勤第1h起算加班費；<strong class="text-gold">不足4h以4h計・逾4h未滿8h以8h計</strong>；不補假</span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞基法§36</span><span class="text-[#a8b0cc] leading-relaxed">每7日至少1例假、1休息日；<strong class="text-gold">不限定週六日</strong>，由勞雇協商</span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞基法§39/§40</span><span class="text-[#a8b0cc] leading-relaxed">國定/例假出勤：<strong class="text-gold">+1倍工資（共2倍）</strong>；未滿8h以8h計；<strong class="text-gold">須補假1日</strong></span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞保條例§13</span><span class="text-[#a8b0cc] leading-relaxed">費率<strong class="text-gold">12.5%</strong>；員工<strong class="text-gold">20%</strong>、雇主<strong class="text-gold">70%</strong>；投保第1級<strong class="text-gold">29,500</strong>，最高<strong class="text-gold">45,800</strong>元</span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">健保法§18</span><span class="text-[#a8b0cc] leading-relaxed">費率<strong class="text-gold">5.17%</strong>；員工<strong class="text-gold">30%</strong>、雇主<strong class="text-gold">60%</strong>（含眷口0.56）；最高<strong class="text-gold">313,000</strong>元</span></div>
+        <div class="flex gap-2 py-2 items-start"><span class="mono text-[10px] text-blue2 bg-blue2/10 border border-blue2/25 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">勞退條例§14</span><span class="text-[#a8b0cc] leading-relaxed">雇主提繳<strong class="text-gold">6%</strong>，不得自員工工資扣除；最高<strong class="text-gold">150,000</strong>元</span></div>
+      </div>
+    </div>
+  </div><!-- end 右欄 -->
+</div><!-- end desktop grid -->
+
+<!-- ══ 手機版 ══ -->
+<div class="lg:hidden flex flex-col" style="height:calc(100vh - 56px)">
+  <div class="flex-1 overflow-hidden relative">
+
+    <!-- P0 排班 -->
+    <div class="mobile-page active absolute inset-0 overflow-y-auto p-3" id="m_page0">
+      <div class="bg-card border border-bdr rounded-xl p-4 mb-3">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📅 月份設定</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-sm text-[#a8b0cc] mb-1 block">民國年</label><input type="number" id="m_year" value="115" min="113" max="120"></div>
+          <div><label class="text-sm text-[#a8b0cc] mb-1 block">月份</label>
+            <div class="relative"><select id="m_month"><option value="1">1月</option><option value="2">2月</option><option value="3">3月</option><option value="4">4月</option><option value="5">5月</option><option value="6">6月</option><option value="7">7月</option><option value="8">8月</option><option value="9">9月</option><option value="10">10月</option><option value="11">11月</option><option value="12">12月</option></select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4 mb-3">
+        <div class="flex justify-between items-center mb-1">
+          <h3 class="text-base font-bold" id="m_calTitle">排班月曆</h3>
+          <span class="text-sm">例假 <span class="mono font-bold text-[#e05c5c]" id="m_excCount">0</span>/4天</span>
+        </div>
+        <p class="text-[10px] text-[#6b7599] mb-3 leading-relaxed">點擊切換：<span class="text-gold">班→休→休出→例→例出→班</span>｜國定：<span class="text-gold">國↔國出</span></p>
+        <div class="grid grid-cols-7 gap-1 mb-1">
+          <div class="text-center text-xs font-bold py-1 text-[#e05c5c]">日</div>
+          <div class="text-center text-xs font-bold py-1 text-[#6b7599]">一</div><div class="text-center text-xs font-bold py-1 text-[#6b7599]">二</div><div class="text-center text-xs font-bold py-1 text-[#6b7599]">三</div><div class="text-center text-xs font-bold py-1 text-[#6b7599]">四</div><div class="text-center text-xs font-bold py-1 text-[#6b7599]">五</div>
+          <div class="text-center text-xs font-bold py-1 text-[#6aabf7]">六</div>
+        </div>
+        <div class="grid grid-cols-7 gap-1" id="m_calGrid"></div>
+        <div class="grid grid-cols-4 gap-2 mt-3">
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-blue2" id="m_st_work">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">工作日</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-[#4caf82]" id="m_st_rest">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">休息日</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-[#e05c5c]" id="m_st_exc">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">例假日</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-base font-bold text-gold" id="m_st_nat">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">國定假日</div></div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 mt-2">
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-blue2" id="m_normH">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">正常工時h</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-[#f07833]" id="m_otH">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">加班工時h</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-2 text-center"><div class="mono text-sm font-bold text-[#9b72cf]" id="m_comp">—</div><div class="text-[10px] text-[#6b7599] mt-0.5">應補假天</div></div>
+        </div>
+        <div class="mt-3">
+          <div class="h-1.5 bg-card2 border border-bdr rounded-full overflow-hidden"><div class="h-full rounded-full" style="background:linear-gradient(90deg,#4a90d9,#f0b429);width:0%;transition:width .5s" id="m_progFill"></div></div>
+          <div class="flex justify-between text-[10px] text-[#6b7599] mt-1"><span>正常工時（上限174h）</span><span class="mono text-gold" id="m_progLbl">—</span></div>
+        </div>
+      </div>
+      <!-- 圖例 -->
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📖 圖例</div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="flex items-center gap-2"><div class="s-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">班</div><span class="text-blue2">工作日</span></div>
+          <div class="flex items-center gap-2"><div class="s-rest w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">休</div><span class="text-[#4caf82]">休息日</span></div>
+          <div class="flex items-center gap-2"><div class="s-rest-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">休出</div><span class="text-teal">休息日出勤</span></div>
+          <div class="flex items-center gap-2"><div class="s-exc w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">例</div><span class="text-[#e05c5c]">例假日</span></div>
+          <div class="flex items-center gap-2"><div class="s-exc-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">例出</div><span style="color:#ff8080">例假日出勤</span></div>
+          <div class="flex items-center gap-2"><div class="s-nat w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">國</div><span class="text-gold">國定假日</span></div>
+          <div class="flex items-center gap-2"><div class="s-nat-work w-9 h-5 rounded text-[8px] flex items-center justify-center font-bold mono flex-shrink-0">國出</div><span class="text-gold2">國定假日出勤</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- P1 設定 -->
+    <div class="mobile-page absolute inset-0 overflow-y-auto p-3 gap-3" id="m_page1">
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">💰 薪資設定</div>
+        <label class="text-sm text-[#a8b0cc] mb-1 block">月薪底薪（元）<span class="text-[10px] text-[#6b7599] ml-1">最低 29,500</span></label>
+        <input type="number" id="m_salary" value="40000" min="29500" step="500">
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">⏱ 工時設定</div>
+        <div class="flex justify-between items-center mb-2"><span class="text-sm text-[#a8b0cc]">工作日每日工時</span><span class="mono text-2xl font-bold text-gold" id="m_lblH">8</span></div>
+        <input type="range" id="m_slH" min="8" max="12" value="8" step="1">
+        <p class="text-xs text-[#6b7599] mt-1" id="m_hintH">正常8h・延長0h／工作日</p>
+        <div class="mt-3 space-y-3">
+          <div><label class="text-sm text-[#a8b0cc] mb-1 block">休出 每日出勤時數（h）</label><input type="number" id="m_restH" value="8" min="1" max="12"><p class="text-[10px] text-[#6b7599] mt-1">未滿4h以4h計・逾4h未滿8h以8h計・不補假（§24②）</p></div>
+          <div><label class="text-sm text-[#e05c5c] mb-1 block">例出 每日出勤時數（h）</label><input type="number" id="m_excH" value="8" min="1" max="12"><p class="text-[10px] text-[#e05c5c] mt-1">未滿8h以8h計・+1倍工資・須補假（§40）</p></div>
+          <div><label class="text-sm text-gold mb-1 block">國出 每日出勤時數（h）</label><input type="number" id="m_natH" value="8" min="1" max="12"><p class="text-[10px] text-gold mt-1">未滿8h以8h計・+1倍工資・須補假（§39）</p></div>
+        </div>
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">🛡 保險設定</div>
+        <div class="flex justify-between items-center py-2 border-b border-bdr/40"><span class="text-sm text-[#a8b0cc]">勞工保險（12.5%）</span><label class="tsw"><input type="checkbox" id="m_labor" checked><span class="ttrack"></span></label></div>
+        <div class="flex justify-between items-center py-2 border-b border-bdr/40"><span class="text-sm text-[#a8b0cc]">全民健康保險（5.17%）</span><label class="tsw"><input type="checkbox" id="m_health" checked><span class="ttrack"></span></label></div>
+        <div class="flex justify-between items-center py-2 mb-3"><span class="text-sm text-[#a8b0cc]">勞工退休金（雇主6%）</span><label class="tsw"><input type="checkbox" id="m_retire" checked><span class="ttrack"></span></label></div>
+        <div class="space-y-3">
+          <div><label class="text-sm text-[#a8b0cc] mb-1 block">健保眷屬口數</label><div class="relative"><select id="m_depsH"><option value="0">0口（本人）</option><option value="1">1口</option><option value="2">2口</option><option value="3">3口以上</option></select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div></div>
+          <div><label class="text-sm text-[#a8b0cc] mb-1 block">扶養親屬（扣繳門檻）</label><div class="relative"><select id="m_deps"><option value="0">0人</option><option value="1">1人</option><option value="2">2人</option><option value="3">3人</option><option value="4">4人</option><option value="5">5人以上</option></select><span class="absolute right-3 top-1/2 -translate-y-1/2 text-gold pointer-events-none">▾</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- P2 薪資 -->
+    <div class="mobile-page absolute inset-0 overflow-y-auto p-3 gap-3" id="m_page2">
+      <div class="border border-gold/30 rounded-xl p-5 text-center" style="background:linear-gradient(135deg,rgba(74,144,217,.15),rgba(240,180,41,.1))">
+        <div class="text-sm text-[#a8b0cc] mb-1">實際到手薪資（月）</div>
+        <div class="mono text-4xl font-bold text-[#4caf82] tracking-tight"><span class="text-lg text-[#6b7599] mr-1">NT$</span><span id="m_net">—</span></div>
+        <div class="text-xs text-[#6b7599] mt-2" id="m_net_sub">—</div>
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">💰 薪資明細</div>
+        <div class="bg-card2 border border-bdr rounded-lg px-3 py-2 mono text-xs text-[#6b7599] mb-4" id="m_formula">—</div>
+        <div class="divide-y divide-bdr">
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">正常工時底薪</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_base">—</div></div><div class="mono text-sm font-semibold text-gold ml-2 whitespace-nowrap" id="m_val_base">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">平日延長 <span class="text-xs text-[#6b7599]">§24①</span></div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_ot">—</div></div><div class="mono text-sm font-semibold text-gold ml-2 whitespace-nowrap" id="m_val_ot">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">休息日出勤 <span class="text-xs text-[#6b7599]">§24②</span></div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_rest">—</div></div><div class="mono text-sm font-semibold text-gold ml-2 whitespace-nowrap" id="m_val_rest">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">例假日出勤 <span class="text-xs text-[#e05c5c]">§40</span></div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_exc">—</div></div><div class="mono text-sm font-semibold text-[#f07833] ml-2 whitespace-nowrap" id="m_val_exc">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">國定假日出勤 <span class="text-xs text-gold">§39</span></div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_nat">—</div></div><div class="mono text-sm font-semibold text-gold ml-2 whitespace-nowrap" id="m_val_nat">—</div></div>
+          <div class="flex justify-between items-start pt-2.5 mt-1"><div><div class="text-sm font-semibold">應領總計</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_gross">—</div></div><div class="mono text-base font-bold text-[#e8eaf0] ml-2 whitespace-nowrap" id="m_val_gross">—</div></div>
+        </div>
+        <div class="comp-note mt-3 bg-red-900/10 border border-red-500/25 rounded-lg p-3 text-sm text-[#a8b0cc]" id="m_comp_note"><strong class="text-[#e05c5c]">⚠ 補假提醒：</strong><span id="m_comp_text"></span></div>
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">📉 扣款明細</div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-sm font-semibold text-[#e05c5c]" id="m_d_labor">—</div><div class="text-[10px] text-[#6b7599] mt-1">勞保（員工20%）</div><div class="mono text-[10px] text-[#6b7599]" id="m_d_lg">—</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-sm font-semibold text-[#e05c5c]" id="m_d_health">—</div><div class="text-[10px] text-[#6b7599] mt-1">健保（員工30%）</div><div class="mono text-[10px] text-[#6b7599]" id="m_d_hg">—</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-sm font-semibold text-[#e05c5c]" id="m_d_tax">—</div><div class="text-[10px] text-[#6b7599] mt-1">扣繳稅（5%）</div><div class="mono text-[10px] text-[#6b7599]" id="m_d_ts">—</div></div>
+          <div class="bg-card2 border border-bdr rounded-lg p-3 text-center"><div class="mono text-sm font-semibold text-[#f07833]" id="m_d_total">—</div><div class="text-[10px] text-[#6b7599] mt-1">合計扣款</div><div class="mono text-[10px] text-[#6b7599]" id="m_d_rate">—</div></div>
+        </div>
+      </div>
+      <div class="bg-card border border-bdr rounded-xl p-4">
+        <div class="text-xs font-bold text-blue2 tracking-widest uppercase mb-3 pb-2 border-b border-bdr">🏢 雇主另計成本</div>
+        <div class="divide-y divide-bdr">
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">勞保（雇主70%）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_el">—</div></div><div class="mono text-sm font-semibold text-blue2 ml-2 whitespace-nowrap" id="m_val_el">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">健保（雇主60%+眷口0.56）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_eh">—</div></div><div class="mono text-sm font-semibold text-blue2 ml-2 whitespace-nowrap" id="m_val_eh">—</div></div>
+          <div class="flex justify-between items-start py-2.5"><div><div class="text-sm font-semibold">勞退（提繳6%）</div><div class="mono text-[10px] text-[#6b7599] mt-0.5" id="m_sub_er">—</div></div><div class="mono text-sm font-semibold text-blue2 ml-2 whitespace-nowrap" id="m_val_er">—</div></div>
+        </div>
+        <div class="flex justify-between items-center mt-3 px-4 py-3 rounded-lg border border-blue2/30" style="background:linear-gradient(135deg,rgba(74,144,217,.12),rgba(74,144,217,.06))">
+          <span class="text-sm font-semibold">雇主每月總用人成本</span>
+          <span class="mono text-xl font-bold text-blue2" id="m_cost">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部 Tab -->
+  <div class="flex-shrink-0 flex bg-panel border-t border-bdr h-14">
+    <button onclick="switchTab(0)" id="tab0" class="flex-1 flex flex-col items-center justify-center gap-1 text-[#6b7599] active:opacity-70 transition-colors" style="font-size:10px"><span style="font-size:20px">📅</span><span>排班</span></button>
+    <button onclick="switchTab(1)" id="tab1" class="flex-1 flex flex-col items-center justify-center gap-1 text-[#6b7599] active:opacity-70 transition-colors" style="font-size:10px"><span style="font-size:20px">⚙️</span><span>設定</span></button>
+    <button onclick="switchTab(2)" id="tab2" class="flex-1 flex flex-col items-center justify-center gap-1 text-[#6b7599] active:opacity-70 transition-colors" style="font-size:10px"><span style="font-size:20px">💰</span><span>薪資</span></button>
+  </div>
+</div>
+
+<script>
+/* Tab */
+function switchTab(n){
+  ['m_page0','m_page1','m_page2'].forEach((id,i)=>{
+    const p=document.getElementById(id);
+    p.classList.toggle('active',i===n);
+    if(i!==n){p.style.display='none';}else{p.style.display='flex';}
+  });
+  for(let i=0;i<3;i++){
+    const b=document.getElementById('tab'+i);
+    b.style.color=i===n?'#f0b429':'#6b7599';
+  }
+}
+switchTab(0);
+
+/* 國定假日 */
+const NAT={"2026-1-1":"開國","2026-2-15":"小年夜","2026-2-16":"除夕","2026-2-17":"初一","2026-2-18":"初二","2026-2-19":"初三","2026-2-20":"補假","2026-2-27":"和平補","2026-4-3":"兒童補","2026-4-5":"清明","2026-5-1":"勞動節","2026-6-19":"端午補","2026-9-25":"中秋補","2026-9-28":"教師節","2026-10-9":"國慶補","2026-10-26":"光復補","2026-12-25":"行憲","2026-12-26":"行憲補","2026-12-27":"行憲補2"};
+
+/* 保險級距 */
+const LG=[{m:29500,v:29500},{m:30300,v:30300},{m:31800,v:31800},{m:33300,v:33300},{m:34800,v:34800},{m:36300,v:36300},{m:38200,v:38200},{m:40100,v:40100},{m:42000,v:42000},{m:43900,v:43900},{m:Infinity,v:45800}];
+const HG=[29500,30300,31800,33300,34800,36300,38200,40100,42000,43900,45800,48200,50600,53000,55400,57800,60800,63800,66800,69800,72800,76500,80400,84300,88300,92400,96600,101100,105600,110100,115500,120900,126300,131700,137100,142500,147900,150000,156400,163800,171700,180500,189500,199000,210200,222000,234800,248200,262600,277100,293000,313000];
+const RG=[1500,3000,4500,6000,7500,9000,10500,11100,12540,13500,15840,16500,17280,17880,19200,20100,21000,21900,22800,24000,25200,26400,27600,28800,29500,30300,31800,33300,34800,36300,38200,40100,42000,43900,45800,48200,50600,53000,55400,57800,60800,63800,66800,69800,72800,76500,80400,84300,88300,92400,96600,101100,105600,110100,115500,120900,126300,131700,137100,142500,147900,150000];
+const WH=[88501,98501,108501,118501,128501,138501];
+function gL(s){for(let g of LG)if(s<=g.m)return g.v;return 45800;}
+function gH(s){for(let g of HG)if(s<=g)return g;return 313000;}
+function gR(s){const c=Math.min(s,150000);for(let g of RG)if(c<=g)return g;return 150000;}
+function ntd(n){return 'NT$'+Math.round(Math.abs(n)).toLocaleString('zh-TW');}
+function rEffH(h){if(h<=0)return 0;if(h<=4)return 4;if(h<=8)return 8;return h;}
+function hEffH(h){if(h<=0)return 0;if(h<8)return 8;return h;}
+
+/* 排班狀態 */
+let dayStates={};
+function dk(y,m,d){return `${y}-${m}-${d}`;}
+function initMonth(ry,mo){
+  const ay=ry+1911,dim=new Date(ay,mo,0).getDate();dayStates={};let exc=0;
+  for(let d=1;d<=dim;d++){const key=dk(ay,mo,d);if(NAT[`${ay}-${mo}-${d}`]){dayStates[key]='nat';continue;}const dow=new Date(ay,mo-1,d).getDay();if(dow===0)dayStates[key]=exc<4?(exc++,'exc'):'rest';else if(dow===6)dayStates[key]='rest';else dayStates[key]='work';}
+}
+function cycleState(key){
+  const cur=dayStates[key],excNow=Object.values(dayStates).filter(s=>s==='exc'||s==='exc_work').length;
+  if(cur==='nat')dayStates[key]='nat_work';else if(cur==='nat_work')dayStates[key]='nat';
+  else if(cur==='exc')dayStates[key]='exc_work';else if(cur==='exc_work')dayStates[key]='work';
+  else if(cur==='work')dayStates[key]='rest';else if(cur==='rest')dayStates[key]='rest_work';
+  else dayStates[key]=excNow<4?'exc':'work';
+}
+const SC={work:'s-work',rest:'s-rest',rest_work:'s-rest-work',exc:'s-exc',exc_work:'s-exc-work',nat:'s-nat',nat_work:'s-nat-work'};
+const ST={work:'班',rest:'休',rest_work:'休出',exc:'例',exc_work:'例出',nat:'國',nat_work:'國出'};
+
+function buildCal(gridId,ry,mo){
+  const ay=ry+1911,dim=new Date(ay,mo,0).getDate(),firstDow=new Date(ay,mo-1,1).getDay(),today=new Date();
+  const grid=document.getElementById(gridId);grid.innerHTML='';
+  for(let i=0;i<firstDow;i++){const e=document.createElement('div');e.className='cal-day empty';grid.appendChild(e);}
+  for(let d=1;d<=dim;d++){
+    const key=dk(ay,mo,d),st=dayStates[key]||'work',isToday=ay===today.getFullYear()&&mo===today.getMonth()+1&&d===today.getDate(),nn=NAT[`${ay}-${mo}-${d}`];
+    const el=document.createElement('div');
+    el.className=`cal-day ${SC[st]}${isToday?' is-today':''}`;
+    el.innerHTML=`<span class="dn">${d}</span><span class="dt">${nn&&(st==='nat'||st==='nat_work')?nn.slice(0,2):ST[st]}</span>`;
+    el.addEventListener('click',()=>{cycleState(key);renderAll();calc();});
+    grid.appendChild(el);
+  }
+}
+
+function renderAll(){
+  const ry=+document.getElementById('d_year').value,mo=+document.getElementById('d_month').value,ay=ry+1911;
+  ['d','m'].forEach(p=>{
+    document.getElementById(`${p}_calTitle`).textContent=`${ry}年${mo}月 排班月曆`;
+    buildCal(`${p}_calGrid`,ry,mo);
+    document.getElementById(`${p}_excCount`).textContent=Object.values(dayStates).filter(s=>s==='exc'||s==='exc_work').length;
+  });
+}
+
+function gv(id){return +document.getElementById(id).value||0;}
+function gc(id){return document.getElementById(id).checked;}
+function sv(id,v){const el=document.getElementById(id);if(el)el.textContent=v;}
+
+function calc(){
+  const ry=gv('d_year')||gv('m_year'),mo=gv('d_month')||gv('m_month'),ay=ry+1911,dim=new Date(ay,mo,0).getDate();
+  const base=gv('d_salary')||gv('m_salary');
+  const dailyH=gv('d_slH')||gv('m_slH')||8;
+  const restWH=Math.max(1,gv('d_restH')||8),excWH=Math.max(1,gv('d_excH')||8),natWH=Math.max(1,gv('d_natH')||8);
+  const dH=Math.min(gv('d_depsH'),3),deps=Math.min(gv('d_deps'),5);
+  const chkL=gc('d_labor'),chkH=gc('d_health'),chkR=gc('d_retire');
+
+  let cWork=0,cRest=0,cRestW=0,cExc=0,cExcW=0,cNat=0,cNatW=0;
+  for(let d=1;d<=dim;d++){const s=dayStates[dk(ay,mo,d)]||'work';if(s==='work')cWork++;else if(s==='rest')cRest++;else if(s==='rest_work')cRestW++;else if(s==='exc')cExc++;else if(s==='exc_work')cExcW++;else if(s==='nat')cNat++;else if(s==='nat_work')cNatW++;}
+
+  const normH=cWork*8,hourly=cWork>0?base/(cWork*8):base/174,dailyRate=cWork>0?base/cWork:base/22;
+  const otPerDay=Math.max(0,dailyH-8),otTotal=Math.min(cWork*otPerDay,46),ot1h=Math.min(otTotal,cWork*2),ot2h=Math.max(otTotal-cWork*2,0);
+  const otPay=Math.round(ot1h*hourly*4/3)+Math.round(ot2h*hourly*5/3);
+  let restPay=0,rEH=0;if(cRestW>0){rEH=rEffH(restWH);const r1=Math.min(rEH,2),r2=Math.max(rEH-2,0);restPay=cRestW*(Math.round(r1*hourly*4/3)+Math.round(r2*hourly*5/3));}
+  let excPay=0,eEH=0;if(cExcW>0){eEH=hEffH(excWH);excPay=cExcW*Math.round(hourly*eEH);}
+  let natPay=0,nEH=0;if(cNatW>0){nEH=hEffH(natWH);natPay=cNatW*Math.round(hourly*nEH);}
+  const gross=base+otPay+restPay+excPay+natPay,compDays=cExcW+cNatW,totalOtH=otTotal+(cRestW*rEH)+(cExcW*eEH)+(cNatW*nEH),insBase=Math.max(base+otPay,29500);
+  let lFee=0,lEmp=0,lG=0;if(chkL){lG=gL(insBase);lFee=Math.round(lG*.125*.2);lEmp=Math.round(lG*.125*.7);}
+  let hFee=0,hEmp=0,hG=0;if(chkH){hG=gH(insBase);hFee=Math.round(hG*.0517*.3*(1+dH));hEmp=Math.round(hG*.0517*.6*1.56);}
+  let rFee=0,rG=0;if(chkR){rG=gR(insBase);rFee=Math.round(rG*.06);}
+  let tFee=0;const tBase=gross-lFee-hFee;if(tBase>WH[deps])tFee=Math.round(tBase*.05);
+  const totalDed=lFee+hFee+tFee,netPay=gross-totalDed,totalCost=gross+lEmp+hEmp+rFee,eff=(gross>0?(totalDed/gross*100).toFixed(1):'0')+'%',pct=Math.min(normH/174*100,100);
+
+  const formula=`時薪=NT$${hourly.toFixed(2)}/h　日薪=NT$${dailyRate.toFixed(0)}/日`;
+  const subBase=`工作日${cWork}天×8h×NT$${hourly.toFixed(2)}`;
+  const subOt=otTotal>0?`前2h段${ot1h}h×4/3+後${ot2h}h×5/3（月上限46h）`:'無平日延長工時';
+  const subRest=cRestW>0?`休出${cRestW}日×${rEH}h×NT$${hourly.toFixed(2)}`:'無休息日出勤';
+  const subExc=cExcW>0?`例出${cExcW}日×${eEH}h×NT$${hourly.toFixed(2)}（+1倍，補假${cExcW}日）`:'無例假日出勤';
+  const subNat=cNatW>0?`國出${cNatW}日×${nEH}h×NT$${hourly.toFixed(2)}（+1倍，補假${cNatW}日）`:'無國定假日出勤';
+  const compTxt=cExcW>0||cNatW>0?(cExcW>0?`例假出勤${cExcW}日→補假${cExcW}日`:'')+((cExcW>0&&cNatW>0)?'；':'')+(cNatW>0?`國定出勤${cNatW}日→補假${cNatW}日`:''):'';
+
+  ['d','m'].forEach(p=>{
+    sv(`${p}_st_work`,cWork+'天');sv(`${p}_st_rest`,(cRest+cRestW)+'天');sv(`${p}_st_exc`,(cExc+cExcW)+'天');sv(`${p}_st_nat`,(cNat+cNatW)+'天');
+    sv(`${p}_normH`,normH+'h');sv(`${p}_otH`,totalOtH+'h');sv(`${p}_comp`,compDays+'天');
+    const pf=document.getElementById(`${p}_progFill`);if(pf)pf.style.width=pct+'%';
+    sv(`${p}_progLbl`,`${normH}/174h`);
+    sv(`${p}_formula`,formula);sv(`${p}_sub_base`,subBase);sv(`${p}_val_base`,ntd(base));
+    sv(`${p}_sub_ot`,subOt);sv(`${p}_val_ot`,ntd(otPay));
+    sv(`${p}_sub_rest`,subRest);sv(`${p}_val_rest`,ntd(restPay));
+    sv(`${p}_sub_exc`,subExc);sv(`${p}_val_exc`,ntd(excPay));
+    sv(`${p}_sub_nat`,subNat);sv(`${p}_val_nat`,ntd(natPay));
+    sv(`${p}_sub_gross`,`投保薪資基準：NT$${insBase.toLocaleString()}`);sv(`${p}_val_gross`,ntd(gross));
+    const cn=document.getElementById(`${p}_comp_note`);if(cn){cn.classList.toggle('show',compTxt!=='');sv(`${p}_comp_text`,compTxt);}
+    sv(`${p}_d_labor`,chkL?`-${ntd(lFee)}`:'$0');sv(`${p}_d_lg`,chkL?`投保${lG.toLocaleString()}`:'未加保');
+    sv(`${p}_d_health`,chkH?`-${ntd(hFee)}`:'$0');sv(`${p}_d_hg`,chkH?`投保${hG.toLocaleString()}`:'未加保');
+    sv(`${p}_d_tax`,tFee>0?`-${ntd(tFee)}`:'$0');sv(`${p}_d_ts`,tFee>0?`超門檻${WH[deps].toLocaleString()}`:'未達門檻');
+    sv(`${p}_d_total`,`-${ntd(totalDed)}`);sv(`${p}_d_rate`,eff);
+    sv(`${p}_net`,Math.round(netPay).toLocaleString('zh-TW'));
+    const ns=document.getElementById(`${p}_net_sub`);if(ns)ns.textContent=`應領${ntd(gross)} 扣款${ntd(totalDed)}（${eff}）`;
+    sv(`${p}_sub_el`,chkL?`投保${lG.toLocaleString()}×12.5%×70%`:'未加保');sv(`${p}_val_el`,chkL?ntd(lEmp):'NT$0');
+    sv(`${p}_sub_eh`,chkH?`投保${hG.toLocaleString()}×5.17%×60%×1.56`:'未加保');sv(`${p}_val_eh`,chkH?ntd(hEmp):'NT$0');
+    sv(`${p}_sub_er`,chkR?`提繳${rG.toLocaleString()}×6%`:'未提繳');sv(`${p}_val_er`,chkR?ntd(rFee):'NT$0');
+    sv(`${p}_cost`,ntd(totalCost));
+  });
+  document.getElementById('hdr_net').textContent='NT$'+Math.round(netPay).toLocaleString('zh-TW');
+  const hm=document.getElementById('hdr_net_m');if(hm)hm.textContent='NT$'+Math.round(netPay).toLocaleString('zh-TW');
+}
+
+function onMonthChange(){
+  const ry=+document.getElementById('d_year').value,mo=+document.getElementById('d_month').value;
+  ['d_year','m_year'].forEach(id=>document.getElementById(id).value=ry);
+  ['d_month','m_month'].forEach(id=>document.getElementById(id).value=mo);
+  initMonth(ry,mo);renderAll();calc();
+}
+function syncAll(srcId,targetId){document.getElementById(targetId).value=document.getElementById(srcId).value;calc();}
+
+/* 滑桿 */
+['d_slH','m_slH'].forEach(id=>{
+  document.getElementById(id).addEventListener('input',function(){
+    const v=this.value;
+    ['d_slH','m_slH'].forEach(i=>document.getElementById(i).value=v);
+    ['d_lblH','m_lblH'].forEach(i=>document.getElementById(i).textContent=v);
+    ['d_hintH','m_hintH'].forEach(i=>document.getElementById(i).textContent=`正常8h・延長${v-8}h／工作日`);
+    calc();
+  });
+});
+
+/* 月份 */
+['d_year','d_month','m_year','m_month'].forEach(id=>document.getElementById(id).addEventListener('change',onMonthChange));
+
+/* 其他輸入同步 */
+[['d_salary','m_salary'],['d_restH','m_restH'],['d_excH','m_excH'],['d_natH','m_natH'],['d_depsH','m_depsH'],['d_deps','m_deps']].forEach(([a,b])=>{
+  document.getElementById(a).addEventListener('input',()=>syncAll(a,b));
+  document.getElementById(b).addEventListener('input',()=>syncAll(b,a));
+});
+[['d_labor','m_labor'],['d_health','m_health'],['d_retire','m_retire']].forEach(([a,b])=>{
+  document.getElementById(a).addEventListener('change',function(){document.getElementById(b).checked=this.checked;calc();});
+  document.getElementById(b).addEventListener('change',function(){document.getElementById(a).checked=this.checked;calc();});
+});
+
+/* 初始化 */
+(function(){
+  const now=new Date(),ry=now.getFullYear()-1911,mo=now.getMonth()+1;
+  ['d_year','m_year'].forEach(id=>document.getElementById(id).value=ry);
+  ['d_month','m_month'].forEach(id=>document.getElementById(id).value=mo);
+  initMonth(ry,mo);renderAll();calc();
+})();
+</script>
+</body>
+</html>
